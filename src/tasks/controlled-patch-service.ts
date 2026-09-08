@@ -1172,9 +1172,9 @@ async function fingerprintUntrackedPath(
       if (stableFileMetadata(after) !== metadata) failPatch();
       return { path, kind: "symlink", metadata, content: linkText.toString("base64") };
     }
-    if (!before.isFile() || typeof constants.O_NOFOLLOW !== "number") failPatch();
+    if (!before.isFile()) failPatch();
 
-    const handle = await open(absolutePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const handle = await open(absolutePath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     try {
       const opened = await handle.stat({ bigint: true });
       if (!opened.isFile() || stableFileMetadata(opened) !== metadata) failPatch();

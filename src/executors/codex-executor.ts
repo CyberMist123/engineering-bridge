@@ -15,7 +15,7 @@ import {
 } from "./executor.js";
 
 export type ProcessStarter = (executable: string, args: readonly string[], options: SpawnOptionsWithoutStdio) => ChildProcessWithoutNullStreams;
-const ENVIRONMENT_ALLOWLIST = ["PATH", "HOME", "CODEX_HOME", "TMPDIR", "LANG", "LC_ALL", "USER", "LOGNAME"] as const;
+const ENVIRONMENT_ALLOWLIST = ["PATH", "HOME", "CODEX_HOME", "CODEX_CA_CERTIFICATE", "TMPDIR", "LANG", "LC_ALL", "USER", "LOGNAME"] as const;
 const MAX_EVIDENCE = 50;
 const MAX_TEXT = 16_384;
 const MAX_EVIDENCE_BYTES = 65_536;

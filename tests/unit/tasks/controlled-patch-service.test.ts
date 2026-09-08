@@ -29,6 +29,7 @@ function currentHead(root: string): string | null {
 function repository(): string {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "engineering-bridge-patch-")));
   git(root, "init", "-q");
+  git(root, "config", "core.autocrlf", "false");
   git(root, "config", "user.name", "Test User");
   git(root, "config", "user.email", "test@example.invalid");
   writeFileSync(join(root, "note.txt"), "before\n");
@@ -40,6 +41,7 @@ function repository(): string {
 function unbornRepository(): string {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "engineering-bridge-root-commit-")));
   git(root, "init", "-q");
+  git(root, "config", "core.autocrlf", "false");
   git(root, "config", "user.name", "Test User");
   git(root, "config", "user.email", "test@example.invalid");
   return root;
@@ -1877,6 +1879,7 @@ test("bounds applied proposal history without evicting live proposed or applying
 test("generates and refines proposals for an unborn repository with an explicit unborn instruction", async () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "engineering-bridge-unborn-")));
   git(root, "init", "-q");
+  git(root, "config", "core.autocrlf", "false");
   const instructions: string[] = [];
   const registry = new RegisteredWorkspaceRegistry([{ id: "workspace", root, allow_write: true }]);
   const tasks = new RegisteredWorkspaceTaskService(registry, () => ({
@@ -1913,6 +1916,7 @@ test("generates and refines proposals for an unborn repository with an explicit 
 test("applies an unborn proposal while the repository stays unborn and does not stage files", async () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "engineering-bridge-unborn-")));
   git(root, "init", "-q");
+  git(root, "config", "core.autocrlf", "false");
   const registry = new RegisteredWorkspaceRegistry([{ id: "workspace", root, allow_write: true }]);
   const tasks = new RegisteredWorkspaceTaskService(registry, () => ({
     execute: async () => ({ kind: "completed", output: additionPatch })
@@ -1933,6 +1937,7 @@ test("applies an unborn proposal while the repository stays unborn and does not 
 test("rejects an unborn proposal once the repository gains its first commit", async () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "engineering-bridge-unborn-")));
   git(root, "init", "-q");
+  git(root, "config", "core.autocrlf", "false");
   const registry = new RegisteredWorkspaceRegistry([{ id: "workspace", root, allow_write: true }]);
   const tasks = new RegisteredWorkspaceTaskService(registry, () => ({
     execute: async () => ({ kind: "completed", output: additionPatch })
@@ -1955,6 +1960,7 @@ test("rejects an unborn proposal once the repository gains its first commit", as
 test("rejects unborn modified targets and targets that already exist as untracked files", async () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "engineering-bridge-unborn-")));
   git(root, "init", "-q");
+  git(root, "config", "core.autocrlf", "false");
   const registry = new RegisteredWorkspaceRegistry([{ id: "workspace", root, allow_write: true }]);
   const tasks = new RegisteredWorkspaceTaskService(registry, () => ({
     execute: async () => ({ kind: "completed", output: validPatch })
@@ -2117,6 +2123,7 @@ test("generation needs no write authorization; APPLY does, and AUTHORIZE afterwa
 test("HEAD detection fails closed: a git helper spawn failure in a real unborn repo is not inferred as unborn", async () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "engineering-bridge-unborn-")));
   git(root, "init", "-q");
+  git(root, "config", "core.autocrlf", "false");
   const registry = new RegisteredWorkspaceRegistry([{ id: "workspace", root, allow_write: true }]);
   const tasks = new RegisteredWorkspaceTaskService(registry, () => ({
     execute: async () => ({ kind: "completed", output: additionPatch })
@@ -2184,6 +2191,7 @@ test("HEAD detection fails closed: a non-branch symbolic HEAD is not inferred as
   // reports no resolvable HEAD, but this is not an unborn branch state.
   const root = realpathSync(mkdtempSync(join(tmpdir(), "engineering-bridge-unborn-")));
   git(root, "init", "-q");
+  git(root, "config", "core.autocrlf", "false");
   writeFileSync(join(root, ".git", "HEAD"), "ref: refs/tags/nonexistent\n");
   const registry = new RegisteredWorkspaceRegistry([{ id: "workspace", root, allow_write: true }]);
   const tasks = new RegisteredWorkspaceTaskService(registry, () => ({
@@ -3603,6 +3611,7 @@ test("validation adapters expose a retained commit proposal without mutating sta
 test("validationProposal exposes a retained unborn proposal with a null base HEAD", async () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "engineering-bridge-unborn-")));
   git(root, "init", "-q");
+  git(root, "config", "core.autocrlf", "false");
   const stateFilePath = retainedStateFile();
   const taskId = retainedTaskId(1);
   writeRetainedState(stateFilePath, {
