@@ -20,6 +20,7 @@ import {
   ValidationProfileStore
 } from "./tasks/validation-profile-store.js";
 import { ValidationProcessRunner } from "./tasks/validation-process-runner.js";
+import { DirectWorkspaceFileService } from "./workspaces/direct-workspace-file-service.js";
 import { ManagedWorkspaceCatalog } from "./workspaces/managed-workspace-catalog.js";
 import { RegisteredWorkspaceRegistry } from "./workspaces/registered-workspace-registry.js";
 import { WorkspaceOnboardingService } from "./workspaces/workspace-onboarding-service.js";
@@ -120,6 +121,7 @@ async function main(): Promise<void> {
     catalog,
     projectRootEntries.map(({ root }) => root)
   );
+  const directFiles = new DirectWorkspaceFileService(registry);
   const service = new RegisteredWorkspaceTaskService(
     registry,
     (executor, workspaceRoot) => {
@@ -147,6 +149,37 @@ async function main(): Promise<void> {
     validationRunner
   );
   const server = new McpServer({ name: "engineering-bridge", version: VERSION });
+
+  if (workspaceEntries.length > 0 || catalog.entries().length > 0) {
+    server.registerTool("workspace_files", {
+      description: "Directly list, read, or search tracked text files in a registered Git workspace without invoking Codex or DSH. Results include base_head so the caller can submit its own controlled patch.",
+      inputSchema: {
+        workspace_id: z.string().min(1),
+        operation: z.enum(["list", "read", "search"]),
+        path: z.string().min(1).optional(),
+        query: z.string().min(1).optional(),
+        start_line: z.number().int().positive().optional(),
+        end_line: z.number().int().positive().optional(),
+        limit: z.number().int().min(1).max(200).optional(),
+        case_sensitive: z.boolean().optional()
+      }
+    }, async ({ workspace_id, operation, path, query, start_line, end_line, limit, case_sensitive }) => {
+      try {
+        return jsonContent(await directFiles.execute({
+          workspace_id,
+          operation,
+          ...(path === undefined ? {} : { path }),
+          ...(query === undefined ? {} : { query }),
+          ...(start_line === undefined ? {} : { start_line }),
+          ...(end_line === undefined ? {} : { end_line }),
+          ...(limit === undefined ? {} : { limit }),
+          ...(case_sensitive === undefined ? {} : { case_sensitive })
+        }));
+      } catch (error) {
+        return { isError: true, ...jsonContent({ error: serializeError(error) }) };
+      }
+    });
+  }
 
   server.registerTool("run_task", {
     description: "Run a read-only task with the selected executor in a pre-registered workspace. This tool does not modify workspace files.",
