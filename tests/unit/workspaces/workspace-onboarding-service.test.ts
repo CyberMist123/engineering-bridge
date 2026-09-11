@@ -187,13 +187,22 @@ test("repeated and concurrent binds of the same canonical root converge on one m
   assert.equal(catalog.entries().length, 1);
 });
 
-test("bind rejects paths outside approved roots, prefix siblings, and symlink escapes", async () => {
+test("bind rejects paths outside approved roots, prefix siblings, and symlink escapes", async (t) => {
   const { approved, registry, catalog, gitInvocations } = setup();
   const outside = mkdtempSync(join(tmpdir(), "bridge-outside-"));
   mkdirSync(join(outside, "target"));
   const sibling = `${approved}-sibling`;
   mkdirSync(join(sibling, "inner"), { recursive: true });
-  symlinkSync(join(outside, "target"), join(approved, "link"));
+  try {
+    symlinkSync(join(outside, "target"), join(approved, "link"));
+  } catch (error) {
+    const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+    if (process.platform === "win32" && (code === "EPERM" || code === "EACCES")) {
+      t.skip(`Windows symlink creation is unavailable (${code}); symlink capability or permission is required.`);
+      return;
+    }
+    throw error;
+  }
   const onboarding = service(registry, catalog, [approved], gitInvocations);
 
   await expectCode(() => onboarding.bind({ project_path: join(outside, "target") }), "WORKSPACE_BOUNDARY_VIOLATION");

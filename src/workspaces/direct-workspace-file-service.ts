@@ -38,15 +38,16 @@ export class DirectWorkspaceFileService {
     const root = this.registry.resolve(request.workspace_id);
     switch (request.operation) {
       case "list":
-        return this.list(root, request.path, request.limit ?? 100);
+        return this.list(request.workspace_id, root, request.path, request.limit ?? 100);
       case "read":
         if (request.path === undefined) throw new CoreError("UNSUPPORTED_ACTION");
-        return this.read(root, request.path, request.start_line, request.end_line);
+        return this.read(request.workspace_id, root, request.path, request.start_line, request.end_line);
       case "search":
         if (request.query === undefined || request.query.length === 0) {
           throw new CoreError("UNSUPPORTED_ACTION");
         }
         return this.search(
+          request.workspace_id,
           root,
           request.query,
           request.path,
@@ -56,13 +57,13 @@ export class DirectWorkspaceFileService {
     }
   }
 
-  private async list(root: string, prefixInput: string | undefined, limit: number): Promise<unknown> {
+  private async list(workspaceId: string, root: string, prefixInput: string | undefined, limit: number): Promise<unknown> {
     const prefix = normalizeRepoPath(prefixInput ?? "", true);
     const [baseHead, paths] = await Promise.all([
       this.baseHead(root),
       this.trackedFiles(root)
     ]);
-    const filtered = paths.filter((path) => matchesPrefix(path, prefix));
+    const filtered = paths.filter((path) => !isExcludedPath(workspaceId, path) && matchesPrefix(path, prefix));
     return {
       base_head: baseHead,
       paths: filtered.slice(0, limit),
@@ -71,12 +72,14 @@ export class DirectWorkspaceFileService {
   }
 
   private async read(
+    workspaceId: string,
     root: string,
     pathInput: string,
     startLine: number | undefined,
     endLine: number | undefined
   ): Promise<unknown> {
     const path = normalizeRepoPath(pathInput, false);
+    if (isExcludedPath(workspaceId, path)) throw new CoreError("WORKSPACE_BOUNDARY_VIOLATION");
     if (startLine !== undefined && endLine !== undefined && endLine < startLine) {
       throw new CoreError("UNSUPPORTED_ACTION");
     }
@@ -112,6 +115,7 @@ export class DirectWorkspaceFileService {
   }
 
   private async search(
+    workspaceId: string,
     root: string,
     query: string,
     prefixInput: string | undefined,
@@ -127,7 +131,7 @@ export class DirectWorkspaceFileService {
     const matches: Array<{ path: string; line: number; text: string }> = [];
 
     for (const path of paths) {
-      if (!matchesPrefix(path, prefix)) continue;
+      if (isExcludedPath(workspaceId, path) || !matchesPrefix(path, prefix)) continue;
       let candidate: string;
       try {
         candidate = await this.safeRegularFile(root, path);
@@ -226,4 +230,8 @@ function normalizeRepoPath(value: string, allowEmpty: boolean): string {
 
 function matchesPrefix(path: string, prefix: string): boolean {
   return prefix.length === 0 || path === prefix || path.startsWith(`${prefix}/`);
+}
+
+function isExcludedPath(workspaceId: string, path: string): boolean {
+  return workspaceId === "memory" && path.split("/").at(-1) === "password.kdbx";
 }

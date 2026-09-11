@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { constants, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -18,12 +18,6 @@ import { ManagedWorkspaceCatalog } from "../../../src/workspaces/managed-workspa
 import { RegisteredWorkspaceRegistry } from "../../../src/workspaces/registered-workspace-registry.js";
 import { WorkspaceOnboardingService } from "../../../src/workspaces/workspace-onboarding-service.js";
 
-const noFollowRequiredSkip = typeof constants.O_NOFOLLOW === "number"
-  ? false
-  : "O_NOFOLLOW is required for ordinary untracked-file fingerprinting";
-const noFollowUnavailableSkip = typeof constants.O_NOFOLLOW === "number"
-  ? "O_NOFOLLOW is available on this platform"
-  : false;
 function git(root: string, ...args: string[]): string {
   return execFileSync("git", args, { cwd: root, encoding: "utf8" });
 }
@@ -669,11 +663,22 @@ test("accepts a normal absolute Git top-level path", async () => {
   assert.equal(generated.baseHead, git(root, "rev-parse", "HEAD").trim());
 });
 
-test("accepts a symlink alias that resolves to the same Git top-level", async () => {
+test("accepts a symlink alias that resolves to the same Git top-level", async (t) => {
   const root = repository();
   const aliasParent = realpathSync(mkdtempSync(join(tmpdir(), "engineering-bridge-alias-")));
   const alias = join(aliasParent, "workspace-alias");
-  symlinkSync(root, alias, "dir");
+  try {
+    symlinkSync(root, alias, "dir");
+  } catch (error) {
+    const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+    if (process.platform === "win32" && (code === "EPERM" || code === "EACCES")) {
+      t.skip(`Windows symlink creation is unavailable (${code}); symlink capability or permission is required.`);
+      rmSync(root, { recursive: true, force: true });
+      rmSync(aliasParent, { recursive: true, force: true });
+      return;
+    }
+    throw error;
+  }
   const { controlled } = fixture(alias, async () => ({ kind: "completed", output: validPatch }));
 
   const generated = await controlled.generate({ workspace_id: "workspace", change_request: "change note" });
@@ -725,9 +730,7 @@ test("stores and applies a controlled patch normalized to one trailing LF", asyn
   assert.equal(readFileSync(join(root, "note.txt"), "utf8"), "after\n");
 });
 
-test("COMMIT fails closed before staging when ordinary untracked fingerprinting lacks O_NOFOLLOW", {
-  skip: noFollowUnavailableSkip
-}, async () => {
+test("COMMIT preserves ordinary untracked files when O_NOFOLLOW is unavailable", async () => {
   const root = repository();
   const anchorPath = "recovery-anchor.md";
   let cachedApplyCalls = 0;
@@ -742,15 +745,16 @@ test("COMMIT fails closed before staging when ordinary untracked fingerprinting 
     const beforeHead = currentHead(root);
     const { controlled, taskId } = await appliedFixture(root, validPatch, starter);
 
-    await expectCode(() => controlled.commit({
+    const result = await controlled.commit({
       patch_task_id: taskId,
-      message: "must fail closed",
+      message: "commit with Windows-compatible fingerprinting",
       confirmation: "COMMIT"
-    }), "WORKSPACE_PRECONDITION_FAILED");
+    });
 
-    assert.equal(currentHead(root), beforeHead);
-    assert.equal(cachedApplyCalls, 0);
-    assert.equal(commitCalls, 0);
+    assert.equal(result.committed, true);
+    assert.notEqual(currentHead(root), beforeHead);
+    assert.equal(cachedApplyCalls, 1);
+    assert.equal(commitCalls, 1);
     assert.equal(git(root, "diff", "--cached", "--name-only"), "");
     assert.equal(readFileSync(join(root, anchorPath), "utf8"), "anchor\n");
     assert.equal(readFileSync(join(root, "note.txt"), "utf8"), "after\n");
@@ -758,7 +762,7 @@ test("COMMIT fails closed before staging when ordinary untracked fingerprinting 
     rmSync(root, { recursive: true, force: true });
   }
 });
-test("initial COMMIT creates a verified root commit from exactly the applied proposal targets", { skip: noFollowRequiredSkip }, async () => {
+test("initial COMMIT creates a verified root commit from exactly the applied proposal targets", async () => {
   const root = unbornRepository();
   const anchorPath = "recovery-anchor.md";
   try {
@@ -919,7 +923,7 @@ test("initial COMMIT rechecks for inserted refs immediately before creating the 
   }
 });
 
-test("initial COMMIT failure cleans up only Bridge-staged proposal targets", { skip: noFollowRequiredSkip }, async () => {
+test("initial COMMIT failure cleans up only Bridge-staged proposal targets", async () => {
   const root = unbornRepository();
   const anchorPath = "recovery-anchor.md";
   let commitCalls = 0;
@@ -957,7 +961,7 @@ test("initial COMMIT failure cleans up only Bridge-staged proposal targets", { s
   }
 });
 
-test("initial COMMIT preserves a created root commit when exact-path post-verification fails", { skip: noFollowRequiredSkip }, async () => {
+test("initial COMMIT preserves a created root commit when exact-path post-verification fails", async () => {
   const root = unbornRepository();
   const anchorPath = "recovery-anchor.md";
   try {
@@ -1150,7 +1154,7 @@ test("COMMIT rejects unrelated tracked dirt", async () => {
   }
 });
 
-test("COMMIT preserves a pre-existing unrelated untracked file", { skip: noFollowRequiredSkip }, async () => {
+test("COMMIT preserves a pre-existing unrelated untracked file", async () => {
   const root = repository();
   const anchorPath = "docs/operations/recovery-anchor.md";
   try {
@@ -1181,7 +1185,7 @@ test("COMMIT preserves a pre-existing unrelated untracked file", { skip: noFollo
   }
 });
 
-test("COMMIT separates an untracked patch target from unrelated untracked files", { skip: noFollowRequiredSkip }, async () => {
+test("COMMIT separates an untracked patch target from unrelated untracked files", async () => {
   const root = repository();
   const anchorPath = "recovery-anchor.md";
   try {
@@ -1210,7 +1214,7 @@ test("COMMIT separates an untracked patch target from unrelated untracked files"
   }
 });
 
-test("COMMIT preserves NUL-enumerated unrelated files with spaces and Unicode", { skip: noFollowRequiredSkip }, async () => {
+test("COMMIT preserves NUL-enumerated unrelated files with spaces and Unicode", async () => {
   const root = repository();
   const fileNames = ["recovery anchor.md", "recovery-锚.md"];
   try {
@@ -1320,7 +1324,7 @@ test("COMMIT leaves ignored untracked state outside the recovery-anchor snapshot
   }
 });
 
-test("COMMIT reports post-commit verification failure without rolling back and retry is deterministic", { skip: noFollowRequiredSkip }, async () => {
+test("COMMIT reports post-commit verification failure without rolling back and retry is deterministic", async () => {
   const root = repository();
   const anchorPath = join(root, "recovery-anchor.md");
   try {
@@ -1398,7 +1402,7 @@ test("COMMIT fails closed when a pre-existing unrelated untracked file is delete
   }
 });
 
-test("COMMIT fails closed when a new unrelated untracked file appears", { skip: noFollowRequiredSkip }, async () => {
+test("COMMIT fails closed when a new unrelated untracked file appears", async () => {
   const root = repository();
   const anchorPath = join(root, "recovery-anchor.md");
   const newPath = join(root, "new-untracked.txt");
@@ -1452,11 +1456,20 @@ test("COMMIT fails closed when a pre-existing unrelated untracked file is replac
   }
 });
 
-test("COMMIT fails closed when a pre-existing unrelated untracked symlink is replaced", async () => {
+test("COMMIT fails closed when a pre-existing unrelated untracked symlink is replaced", async (t) => {
   const root = repository();
   const anchorPath = join(root, "recovery-anchor-link");
   try {
-    symlinkSync("missing-before", anchorPath);
+    try {
+      symlinkSync("missing-before", anchorPath);
+    } catch (error) {
+      const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+      if (process.platform === "win32" && (code === "EPERM" || code === "EACCES")) {
+        t.skip(`Windows symlink creation is unavailable (${code}); symlink capability or permission is required.`);
+        return;
+      }
+      throw error;
+    }
     const { controlled, taskId } = await appliedFixture(
       root,
       validPatch,

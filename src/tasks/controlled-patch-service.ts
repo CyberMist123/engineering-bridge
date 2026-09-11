@@ -209,7 +209,7 @@ export class ControlledPatchService {
       throw new CoreError("WORKSPACE_PRECONDITION_FAILED");
     }
     const output = normalizeTrailingLf(request.diff);
-    await this.preflightPatch(workspaceRoot, base, output);
+    await this.preflightPatch(request.workspace_id, workspaceRoot, base, output);
 
     const { taskId } = this.tasks.submitControlledPatchTask(output, true);
     this.proposals.set(taskId, {
@@ -249,7 +249,7 @@ export class ControlledPatchService {
   async preflightValidationProposal(patchTaskId: string): Promise<ControlledPatchValidationProposal> {
     const validationProposal = this.validationProposal(patchTaskId);
     const proposal = this.proposals.get(patchTaskId as Id)!;
-    await this.preflightPatch(proposal.workspaceRoot, proposal.base, validationProposal.patch);
+    await this.preflightPatch(proposal.workspaceId, proposal.workspaceRoot, proposal.base, validationProposal.patch);
     return validationProposal;
   }
 
@@ -276,7 +276,7 @@ export class ControlledPatchService {
       proposal.state = "applying";
       try {
         await this.persist();
-        const targets = await this.preflightPatch(proposal.workspaceRoot, proposal.base, result.output);
+        const targets = await this.preflightPatch(proposal.workspaceId, proposal.workspaceRoot, proposal.base, result.output);
         await this.git(proposal.workspaceRoot, ["apply", "--recount", "--unidiff-zero"], result.output);
         proposal.state = "applied";
         this.appliedProposalTaskIds.push(request.patch_task_id as Id);
@@ -745,12 +745,15 @@ export class ControlledPatchService {
   // workspace must still match the proposal base, the patch must be
   // structurally safe, every target must be verifiable against base HEAD /
   // index / worktree, and `git apply --check` must accept the patch.
-  private async preflightPatch(workspaceRoot: string, base: ProposalBase, patch: string): Promise<PatchTarget[]> {
+  private async preflightPatch(workspaceId: string, workspaceRoot: string, base: ProposalBase, patch: string): Promise<PatchTarget[]> {
     const currentBase = await this.verifyWorkspace(workspaceRoot);
     // Unborn proposals require the repository to still be unborn: if the user
     // created the first commit meanwhile, this proposal must be rejected.
     if (!sameBase(currentBase, base)) throw new CoreError("WORKSPACE_PRECONDITION_FAILED");
     const targets = parsePatch(patch);
+    if (workspaceId === "memory" && targets.some(({ path }) => posix.basename(path) === "password.kdbx")) {
+      failPatch();
+    }
     for (const target of targets) {
       if (base.kind === "unborn") {
         // No tracked files exist in an unborn repository, so only pure
@@ -1172,9 +1175,9 @@ async function fingerprintUntrackedPath(
       if (stableFileMetadata(after) !== metadata) failPatch();
       return { path, kind: "symlink", metadata, content: linkText.toString("base64") };
     }
-    if (!before.isFile() || typeof constants.O_NOFOLLOW !== "number") failPatch();
+    if (!before.isFile()) failPatch();
 
-    const handle = await open(absolutePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const handle = await open(absolutePath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     try {
       const opened = await handle.stat({ bigint: true });
       if (!opened.isFile() || stableFileMetadata(opened) !== metadata) failPatch();
