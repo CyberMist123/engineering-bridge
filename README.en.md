@@ -2,11 +2,11 @@
 
 **Connect Chat directly to local Codex or DSH: no more shuttling prompts and results—Chat dispatches, supervises, and accepts the executor's work.**
 
-[![v1.4.2](https://img.shields.io/badge/release-v1.4.2-blue)](https://github.com/wudy29/engineering-bridge/releases/tag/v1.4.2)
+[![v1.4.4](https://img.shields.io/badge/release-v1.4.4-blue)](https://github.com/wudy29/engineering-bridge/releases/tag/v1.4.4)
 [![CI](https://github.com/wudy29/engineering-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/wudy29/engineering-bridge/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-[简体中文](README.md) · **[v1.4.2](https://github.com/wudy29/engineering-bridge/releases/tag/v1.4.2) · V1 · Local · Continuously maintainer-tested on macOS.** Tag, GitHub Release, and npm publication remain separate release actions. Windows currently has smoke verification of the Codex and DSH npm CLI launch path on GitHub Actions `windows-latest` (Node 22 with actual npm-installed `@openai/codex` and `@deepseek-ai/dsh`); broader Windows environments and client combinations are not claimed fully certified.
+[简体中文](README.md) · **[v1.4.4](https://github.com/wudy29/engineering-bridge/releases/tag/v1.4.4) · V1 · Local · Continuously maintainer-tested on macOS.** Tag, GitHub Release, and npm publication remain separate release actions. Windows currently has smoke verification of the Codex and DSH npm CLI launch path on GitHub Actions `windows-2025` (Node 22 with actual npm-installed `@openai/codex` and `@deepseek-ai/dsh`); broader Windows environments and client combinations are not claimed fully certified.
 
 ## Before / now
 
@@ -116,7 +116,7 @@ npm install
 npm run build
 ```
 
-The current v1.4.2 release has no one-click installer.
+The current v1.4.4 release has no one-click installer.
 
 ### 3. Register a workspace
 
@@ -160,6 +160,8 @@ Client schemas and configuration locations differ; translate these generic field
 Use absolute paths. If the client already supplies a suitable `PATH`, the `env` override may be omitted. Do not copy this shape unchanged into a client with a different schema.
 
 If you use DSH and `DEEPSEEK_API_KEY` is set in the environment Bridge runs under (for example, your shell or launcher environment), Bridge forwards it to DSH—it is the only credential environment variable Bridge forwards. Do not put it in the `env` override here or in any config file—secrets do not belong in configuration.
+
+**Codex routing policy (optional):** when `ENGINEERING_BRIDGE_CODEX_ROUTING_POLICY` is unset, it defaults to `inherit`, preserving v1.4.x compatibility: Codex may use its existing configuration when `model` or `reasoning_effort` is omitted. Deployments that must fail closed can set it exactly to `explicit`; then every Codex call through `run_task`, `generate_controlled_patch`, or `refine_controlled_patch` must provide both non-blank `model` and `reasoning_effort`, or Bridge returns `CODEX_ROUTING_REQUIRED` before starting a Codex process. After the gate, the existing `model/list` and reasoning validation still run, and the selections are sent through `turn/start`. Invalid values—including an empty string, case variants, or aliases—fail Bridge startup rather than falling back to `inherit`; DSH is not constrained by this policy.
 
 Reconnect the integration and confirm these ten current V1 tools are visible:
 

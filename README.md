@@ -2,11 +2,11 @@
 
 **打通 Chat 与本地 Codex 与 Deepseek harness：不再搬提示词，Chat 直接调度、监督并验收 Codex 与 Deepseek harness。**
 
-[![v1.4.2](https://img.shields.io/badge/release-v1.4.2-blue)](https://github.com/wudy29/engineering-bridge/releases/tag/v1.4.2)
+[![v1.4.4](https://img.shields.io/badge/release-v1.4.4-blue)](https://github.com/wudy29/engineering-bridge/releases/tag/v1.4.4)
 [![CI](https://github.com/wudy29/engineering-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/wudy29/engineering-bridge/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-[English](README.en.md) · **[v1.4.2](https://github.com/wudy29/engineering-bridge/releases/tag/v1.4.2) · V1 · 本地运行 · macOS 由维护者持续实测。** tag、GitHub Release 与 npm 发布仍是彼此独立的 release 操作。Windows 侧目前已有 GitHub Actions `windows-latest` 上的 Codex 与 DSH npm CLI 启动路径 smoke 验证（Node 22 + 实际 npm 安装的 `@openai/codex` 与 `@deepseek-ai/dsh`）；更广的 Windows 环境与客户端组合不做全面认证。
+[English](README.en.md) · **[v1.4.4](https://github.com/wudy29/engineering-bridge/releases/tag/v1.4.4) · V1 · 本地运行 · macOS 由维护者持续实测。** tag、GitHub Release 与 npm 发布仍是彼此独立的 release 操作。Windows 侧目前已有 GitHub Actions `windows-2025` 上的 Codex 与 DSH npm CLI 启动路径 smoke 验证（Node 22 + 实际 npm 安装的 `@openai/codex` 与 `@deepseek-ai/dsh`）；更广的 Windows 环境与客户端组合不做全面认证。
 
 ## 以前 / 现在
 
@@ -117,7 +117,7 @@ npm install
 npm run build
 ```
 
-当前 v1.4.2 没有一键安装器。
+当前 v1.4.4 没有一键安装器。
 
 ### 3. 登记工作区
 
@@ -161,6 +161,8 @@ npm run build
 请使用绝对路径。如果客户端已经提供合适的 `PATH`，可以省略 `env` 覆盖。不要把此结构原样套入使用其他 schema 的客户端。
 
 使用 DSH 时，若 `DEEPSEEK_API_KEY` 已设置在 Bridge 进程运行时的环境变量中（例如 shell 或启动器环境），Bridge 会将其转发给 DSH——这是 Bridge 转发的唯一凭据环境变量。不要把它写进这里的 `env` 覆盖或任何配置文件——密钥不应落入配置。
+
+**Codex routing policy（可选）：** `ENGINEERING_BRIDGE_CODEX_ROUTING_POLICY` 未设置时默认为 `inherit`，保持 v1.4.x 的兼容行为：`model` 或 `reasoning_effort` 缺省时允许 Codex 使用其既有配置。需要 fail closed 的部署可将它严格设置为 `explicit`；此时 `run_task`、`generate_controlled_patch` 和 `refine_controlled_patch` 的每次 Codex 调用都必须同时提供非空 `model` 与 `reasoning_effort`，否则在启动 Codex 进程前返回 `CODEX_ROUTING_REQUIRED`。通过 gate 后仍会执行现有 `model/list` / reasoning validation，并把选择传入 `turn/start`。非法值（包括空字符串、大小写变体或其他别名）会使 Bridge 启动失败，不会回退到 `inherit`；DSH 行为不受此策略约束。
 
 重新连接集成，并确认能看到以下十三个当前 V1 工具：
 

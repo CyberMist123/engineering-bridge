@@ -1,7 +1,7 @@
 import { realpathSync } from "node:fs";
-import { isAbsolute, normalize } from "node:path";
 
 import { CoreError } from "../core/errors.js";
+import { isWorkspaceRoot } from "./workspace-paths.js";
 
 export interface WorkspaceRegistration {
   readonly id: string;
@@ -35,9 +35,8 @@ export class RegisteredWorkspaceRegistry {
     this.canonicalize = canonicalize;
     for (const entry of entries) {
       if (typeof entry.id !== "string" || entry.id.length === 0 ||
-          typeof entry.root !== "string" || entry.root.length === 0 ||
+          !isWorkspaceRoot(entry.root) ||
           (entry.allow_write !== undefined && typeof entry.allow_write !== "boolean") ||
-          !isAbsolute(entry.root) || normalize(entry.root) !== entry.root ||
           this.registrations.has(entry.id)) {
         throw new CoreError("WORKSPACE_BOUNDARY_VIOLATION");
       }
@@ -74,6 +73,7 @@ export class RegisteredWorkspaceRegistry {
   }
 
   findByRoot(canonicalRoot: string): WorkspaceLookup | undefined {
+    this.refreshManualCanonicalRoots();
     const id = this.canonicalRoots.get(canonicalRoot);
     if (id === undefined) return undefined;
     const registration = this.registrations.get(id);
@@ -87,15 +87,27 @@ export class RegisteredWorkspaceRegistry {
   }
 
   registerManaged(id: string, root: string, allowWrite = false): void {
+    if (!isWorkspaceRoot(root)) throw new CoreError("WORKSPACE_BOUNDARY_VIOLATION");
     const existing = this.registrations.get(id);
     if (existing !== undefined) {
       if (existing.root === root) return;
       throw new CoreError("WORKSPACE_BOUNDARY_VIOLATION");
     }
     const canonicalRoot = this.canonicalize(root);
+    this.refreshManualCanonicalRoots();
     if (this.canonicalRoots.has(canonicalRoot)) throw new CoreError("WORKSPACE_BOUNDARY_VIOLATION");
     this.registrations.set(id, { root, canonicalRoot, allowWrite, source: "managed" });
     this.canonicalRoots.set(canonicalRoot, id);
+  }
+
+  private refreshManualCanonicalRoots(): void {
+    this.canonicalRoots.clear();
+    for (const [id, registration] of this.registrations) {
+      const canonicalRoot = registration.source === "manual"
+        ? this.canonicalize(registration.root)
+        : registration.canonicalRoot;
+      if (!this.canonicalRoots.has(canonicalRoot)) this.canonicalRoots.set(canonicalRoot, id);
+    }
   }
 
   sourceOf(workspaceId: string): "manual" | "managed" {
@@ -116,7 +128,7 @@ export class RegisteredWorkspaceRegistry {
 
 function bestEffortCanonicalRoot(root: string): string {
   try {
-    return realpathSync(root);
+    return realpathSync.native(root);
   } catch {
     return root;
   }
