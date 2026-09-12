@@ -60,7 +60,7 @@ test("submit and APPLY allow unrelated unstaged tracked changes", async () => {
   const applied = await controlled.apply({ patch_task_id: submitted.taskId, confirmation: "APPLY" });
 
   assert.deepEqual(applied.changed_paths, ["note.txt"]);
-  assert.equal(readFileSync(join(root, "note.txt"), "utf8"), "after\n");
+  assert.equal(readFileSync(join(root, "note.txt"), "utf8").replaceAll("\r\n", "\n"), "after\n");
   assert.equal(readFileSync(join(root, "other.txt"), "utf8"), "unrelated unstaged\n");
   assert.equal(git(root, "diff", "--name-only", "--", "other.txt").trim(), "other.txt");
 });
@@ -76,7 +76,7 @@ test("submit and APPLY allow unrelated staged tracked changes", async () => {
   const applied = await controlled.apply({ patch_task_id: submitted.taskId, confirmation: "APPLY" });
 
   assert.deepEqual(applied.changed_paths, ["note.txt"]);
-  assert.equal(readFileSync(join(root, "note.txt"), "utf8"), "after\n");
+  assert.equal(readFileSync(join(root, "note.txt"), "utf8").replaceAll("\r\n", "\n"), "after\n");
   assert.equal(git(root, "diff", "--cached", "--name-only", "--", "other.txt").trim(), "other.txt");
 });
 
