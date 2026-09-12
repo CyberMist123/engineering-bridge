@@ -1093,7 +1093,7 @@ function parseRetainedProposal(item: unknown): RetainedProposal | undefined {
   return {
     taskId: item.task_id,
     workspaceId: item.workspace_id,
-    workspaceRoot: item.workspaceRoot,
+    workspaceRoot: item.workspace_root,
     base,
     state: item.state as Proposal["state"],
     parentTaskId: item.parent_task_id as Id | undefined,
