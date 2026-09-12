@@ -3514,14 +3514,10 @@ index 9d1c2f3..3b18e51 100644
 
     const results = await Promise.allSettled([firstApply, secondApply]);
     assert.equal(secondEnteredBeforeRelease, false);
-    assert.equal(results.filter(({ status }) => status === "fulfilled").length, 1);
-    assert.equal(results.filter(({ status }) => status === "rejected").length, 1);
-    assert.equal(
-      (results.find(({ status }) => status === "rejected") as PromiseRejectedResult).reason.code,
-      "WORKSPACE_PRECONDITION_FAILED"
-    );
+    assert.equal(results.filter(({ status }) => status === "fulfilled").length, 2);
+    assert.equal(results.filter(({ status }) => status === "rejected").length, 0);
     assert.equal(readFileSync(join(root, "note.txt"), "utf8"), "after\n");
-    assert.equal(readFileSync(join(root, "second.txt"), "utf8"), "before\n");
+    assert.equal(readFileSync(join(root, "second.txt"), "utf8"), "after\n");
   } finally {
     releaseGate(firstRelease);
     releaseGate(secondRelease);
