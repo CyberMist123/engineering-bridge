@@ -112,10 +112,6 @@ export class ControlledPatchService {
 
     let retainedState: RetainedState;
     try {
-      // Global failures (unreadable JSON, bad envelope/version, invalid
-      // applied_task_ids, identity ambiguity, applied-history contradictions)
-      // still fail the whole load; only per-record problems are quarantined
-      // inside parseRetainedState.
       retainedState = parseRetainedState(JSON.parse(source), this.registry);
     } catch {
       throw new CoreError("INTERNAL_ERROR");
@@ -169,8 +165,6 @@ export class ControlledPatchService {
   }
 
   async generate(request: { workspace_id: string; change_request: string; executor?: ExecutorName; model?: string; reasoning_effort?: string }): Promise<{ taskId: Id; baseHead: string | null }> {
-    // Generating a proposal is read-only analysis: any registered workspace
-    // may propose; only APPLY requires controlled-write authorization.
     const workspaceRoot = this.registry.resolve(request.workspace_id);
     const base = await this.verifyWorkspace(workspaceRoot);
     return this.startProposal(request.workspace_id, workspaceRoot, base,
@@ -199,10 +193,6 @@ export class ControlledPatchService {
   }
 
   async submit(request: { workspace_id: string; base_head: string; diff: string }): Promise<{ taskId: Id; baseHead: string | null }> {
-    // Submitting a caller-provided diff is read-only intake: like generation,
-    // it requires no write authorization and writes nothing. The diff must be
-    // a complete unified diff against exactly the current commit HEAD and must
-    // pass the same full controlled-patch preflight that APPLY runs.
     const workspaceRoot = this.registry.resolve(request.workspace_id);
     const base = await this.verifyWorkspace(workspaceRoot);
     if (base.kind !== "commit" || base.head !== request.base_head) {
@@ -606,7 +596,7 @@ export class ControlledPatchService {
       throw new CoreError("WORKSPACE_PRECONDITION_FAILED");
     }
     const fingerprints = await fingerprintUntrackedPaths(
-      workspaceRoot,
+      proposal.workspaceRoot,
       expectedFingerprints.map(({ path }) => path)
     );
     if (!sameUntrackedFingerprints(fingerprints, expectedFingerprints) ||
@@ -715,7 +705,7 @@ export class ControlledPatchService {
       throw new CoreError("WORKSPACE_PRECONDITION_FAILED");
     }
     const headRef = (await this.git(workspaceRoot, ["symbolic-ref", "--quiet", "HEAD"])).trim();
-    const refs = splitLines(await this.git(workspaceRoot, [
+    const refs = splitLines(await this.git(proposal.workspaceRoot, [
       "for-each-ref",
       "--format=%(refname)"
     ]));
@@ -740,15 +730,8 @@ export class ControlledPatchService {
     }
   }
 
-  // The shared read-only controlled-patch preflight used by submit (before a
-  // proposal is registered) and by APPLY (immediately before the write): the
-  // workspace must still match the proposal base, the patch must be
-  // structurally safe, every target must be verifiable against base HEAD /
-  // index / worktree, and `git apply --check` must accept the patch.
   private async preflightPatch(workspaceId: string, workspaceRoot: string, base: ProposalBase, patch: string): Promise<PatchTarget[]> {
     const currentBase = await this.verifyWorkspace(workspaceRoot);
-    // Unborn proposals require the repository to still be unborn: if the user
-    // created the first commit meanwhile, this proposal must be rejected.
     if (!sameBase(currentBase, base)) throw new CoreError("WORKSPACE_PRECONDITION_FAILED");
     const targets = parsePatch(patch);
     if (workspaceId === "memory" && targets.some(({ path }) => posix.basename(path) === "password.kdbx")) {
@@ -756,13 +739,19 @@ export class ControlledPatchService {
     }
     for (const target of targets) {
       if (base.kind === "unborn") {
-        // No tracked files exist in an unborn repository, so only pure
-        // additions are verifiable; modified targets cannot be checked.
         if (target.kind !== "added") failPatch();
       } else {
         const entry = await this.git(workspaceRoot, ["ls-tree", base.head, "--", target.path]);
         if (target.kind === "modified") {
           if (!/^(100644|100755) blob [0-9a-f]+\t[^\n]+\n?$/u.test(entry)) failPatch();
+          const status = await this.git(workspaceRoot, [
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+            "--",
+            target.path
+          ]);
+          if (status.length !== 0) throw new CoreError("WORKSPACE_PRECONDITION_FAILED");
           continue;
         }
         if (entry.length !== 0) failPatch();
@@ -873,8 +862,6 @@ export class ControlledPatchService {
 
   private async verifyWorkspace(workspaceRoot: string): Promise<ProposalBase> {
     await this.verifyWorkspaceRoot(workspaceRoot);
-    const status = await this.git(workspaceRoot, ["status", "--porcelain", "--untracked-files=no"]);
-    if (status.length !== 0) throw new CoreError("WORKSPACE_PRECONDITION_FAILED");
     return this.detectBase(workspaceRoot);
   }
 
@@ -893,19 +880,6 @@ export class ControlledPatchService {
     if (canonicalTopLevel !== canonicalWorkspaceRoot) throw new CoreError("WORKSPACE_PRECONDITION_FAILED");
   }
 
-  // Distinguishes the three possible HEAD states without ever inferring "unborn"
-  // from a bare nonzero exit or a catch-all failure. A repository is genuinely
-  // unborn only when all of the following hold (stable, machine-decidable Git
-  // primitives):
-  //   1. `git rev-parse --verify --quiet HEAD` exits non-zero: HEAD does not
-  //      resolve to a commit.
-  //   2. `git symbolic-ref --quiet HEAD` exits zero and names a refs/heads/<branch>
-  //      ref: HEAD is a symbolic branch ref, not detached, malformed, or absent.
-  //   3. `git rev-parse --verify --quiet refs/heads/<branch>` exits non-zero:
-  //      that branch has no commit yet (unborn branch state).
-  // Any other combination — spawn/IO failures, detached or non-branch HEAD, or a
-  // branch that resolves while HEAD does not — fails closed as
-  // WORKSPACE_PRECONDITION_FAILED instead of being guessed as unborn.
   private async detectBase(workspaceRoot: string): Promise<ProposalBase> {
     const head = await this.gitResult(workspaceRoot, ["rev-parse", "--verify", "--quiet", "HEAD"]);
     if (head.code === 0) {
@@ -935,10 +909,6 @@ export class ControlledPatchService {
     return result.stdout;
   }
 
-  // Exit-code-observing sibling of git(), used only for HEAD detection: it
-  // resolves with the exit code and stdout instead of rejecting on nonzero, so
-  // detectBase can prove the unborn state instead of assuming it. All other
-  // calls keep using git(), which rejects on any nonzero exit.
   private gitResult(cwd: string, args: readonly string[], input?: string): Promise<GitProcessResult> {
     return runBoundedGit(
       this.startProcess,
@@ -951,24 +921,12 @@ export class ControlledPatchService {
   }
 }
 
-// Strictly parses the retained controlled-patch state. Global invariants always
-// fail closed with INTERNAL_ERROR; a single proposal record that cannot be
-// safely restored is quarantined instead, so one bad record cannot brick the
-// whole server. Quarantine never weakens the replay/duplicate-APPLY judgment:
-// a quarantined record is dropped from the in-memory map (it can never be
-// refined or APPLYed again), its task is never restored, and any
-// applied_task_ids entry that referenced it is dropped with it, keeping the
-// applied history exactly equal to the surviving applied proposals.
 function parseRetainedState(value: unknown, registry: RegisteredWorkspaceRegistry): RetainedState {
-  // 1. Strict envelope: an unreadable or unsupported top-level state fails the
-  //    whole load, never a per-record quarantine.
   if (!isObject(value) || value.version !== CONTROLLED_PATCH_STATE_VERSION ||
       !Array.isArray(value.applied_task_ids) || !Array.isArray(value.proposals)) {
     throw new CoreError("INTERNAL_ERROR");
   }
 
-  // 2. Strict applied_task_ids list: the list itself is a global invariant
-  //    (well-formed ids, no duplicates, bounded history).
   if (!value.applied_task_ids.every(isId)) throw new CoreError("INTERNAL_ERROR");
   const appliedTaskIds = value.applied_task_ids as Id[];
   if (appliedTaskIds.length > MAX_APPLIED_PROPOSAL_HISTORY ||
@@ -976,14 +934,10 @@ function parseRetainedState(value: unknown, registry: RegisteredWorkspaceRegistr
     throw new CoreError("INTERNAL_ERROR");
   }
 
-  // 3. Record-level parse with per-record quarantine.
   const proposals: RetainedProposal[] = [];
   const quarantinedTaskIds = new Set<Id>();
   const taskIdOccurrences = new Map<Id, number>();
   for (const item of value.proposals) {
-    // A duplicated task id makes proposal identity ambiguous even when one of
-    // the duplicates is otherwise broken (one copy could say "applied" while
-    // the other says "proposed"), so it always fails closed.
     if (isObject(item) && isId(item.task_id)) {
       const occurrences = (taskIdOccurrences.get(item.task_id) ?? 0) + 1;
       taskIdOccurrences.set(item.task_id, occurrences);
@@ -994,9 +948,6 @@ function parseRetainedState(value: unknown, registry: RegisteredWorkspaceRegistr
       if (isObject(item) && isId(item.task_id)) quarantinedTaskIds.add(item.task_id);
       continue;
     }
-    // A proposal whose workspace is no longer registered (or whose root no
-    // longer matches the registry) can be neither safely restored nor APPLYed:
-    // quarantine it instead of failing the whole load.
     if (!registryMatches(registry, proposal.workspaceId, proposal.workspaceRoot)) {
       quarantinedTaskIds.add(proposal.taskId);
       continue;
@@ -1004,10 +955,6 @@ function parseRetainedState(value: unknown, registry: RegisteredWorkspaceRegistr
     proposals.push(proposal);
   }
 
-  // 4. parent/refine relationship invariants over surviving proposals. The
-  //    parent link is audit lineage only: a dangling parent (quarantined or
-  //    never persisted) is allowed, but a surviving parent whose workspace or
-  //    base contradicts the child fails closed.
   const byTaskId = new Map<Id, RetainedProposal>();
   for (const proposal of proposals) byTaskId.set(proposal.taskId, proposal);
   for (const proposal of proposals) {
@@ -1021,11 +968,6 @@ function parseRetainedState(value: unknown, registry: RegisteredWorkspaceRegistr
     }
   }
 
-  // 5. Applied-history cross-invariant over survivors: applied_task_ids must
-  //    equal exactly the surviving applied proposals. A quarantined record
-  //    takes its own applied_task_ids entry with it, so dropping a bad applied
-  //    record never leaves a dangling applied id behind; an applied id with no
-  //    proposal record at all still fails closed.
   const survivingAppliedTaskIds = appliedTaskIds.filter((taskId) => !quarantinedTaskIds.has(taskId));
   const survivingAppliedTaskIdSet = new Set(survivingAppliedTaskIds);
   const appliedProposals = proposals.filter(({ state }) => state === "applied");
@@ -1036,11 +978,6 @@ function parseRetainedState(value: unknown, registry: RegisteredWorkspaceRegistr
   return { proposals, appliedTaskIds: survivingAppliedTaskIds };
 }
 
-// Parses a single retained proposal record. Returns undefined for a record that
-// cannot be safely restored because its own fields are malformed; the caller
-// quarantines such records. Any failure here is strictly record-local: no
-// global invariant (identity, applied history, replay safety) is affected by
-// dropping the record.
 function parseRetainedProposal(item: unknown): RetainedProposal | undefined {
   if (!isObject(item) || !isId(item.task_id) ||
       typeof item.workspace_id !== "string" || item.workspace_id.length === 0 ||
@@ -1057,9 +994,6 @@ function parseRetainedProposal(item: unknown): RetainedProposal | undefined {
   } catch {
     return undefined;
   }
-  // A caller-submitted proposal carries source: "submitted" and no executor
-  // identity: a submitted record that claims an executor is contradictory and
-  // is quarantined. Any other source value is invalid retained state.
   if (item.source === "submitted") {
     if (item.executor !== undefined) return undefined;
     return {
@@ -1074,9 +1008,6 @@ function parseRetainedProposal(item: unknown): RetainedProposal | undefined {
     };
   }
   if (item.source !== undefined) return undefined;
-  // The retained executor is honest state: records written before executor
-  // selection default to codex, and anything else is quarantined rather than
-  // silently downgraded (a "gemini" record must never claim codex semantics).
   const rawExecutor = item.executor;
   const executor: ExecutorName | undefined = rawExecutor === undefined
     ? "codex"
@@ -1297,10 +1228,6 @@ function failPatch(): never {
   throw new CoreError("WORKSPACE_PRECONDITION_FAILED");
 }
 
-// Strictly parses the persisted base-state fields. A proposal base is either a
-// real commit (base_head = <hex>, unborn absent/false) or the unborn repository
-// state (base_head = null, unborn = true); every other combination is invalid
-// retained state and is rejected like the existing invalid-record handling.
 function parseProposalBase(item: Record<string, unknown>): ProposalBase {
   if (item.unborn === true) {
     if (item.base_head !== null) throw new CoreError("INTERNAL_ERROR");
