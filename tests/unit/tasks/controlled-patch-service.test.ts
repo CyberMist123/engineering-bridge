@@ -2002,11 +2002,19 @@ test("removes a proposal when its controlled patch generation task fails", async
   assert.equal(proposals.has(generated.taskId), false);
 });
 
-test("rejects dirty workspaces, changed HEAD, and malformed or out-of-scope patches", async () => {
+test("rejects dirty targets, changed HEAD, and malformed or out-of-scope patches", async () => {
   const dirtyRoot = repository();
   writeFileSync(join(dirtyRoot, "note.txt"), "dirty\n");
-  const dirty = fixture(dirtyRoot, async () => ({ kind: "completed", output: validPatch })).controlled;
-  await expectCode(() => dirty.generate({ workspace_id: "workspace", change_request: "change" }), "WORKSPACE_PRECONDITION_FAILED");
+  const { controlled: dirty, tasks: dirtyTasks } = fixture(
+    dirtyRoot,
+    async () => ({ kind: "completed", output: validPatch })
+  );
+  const dirtyGenerated = await dirty.generate({ workspace_id: "workspace", change_request: "change" });
+  await terminal(dirtyTasks, dirtyGenerated.taskId);
+  await expectCode(
+    () => dirty.apply({ patch_task_id: dirtyGenerated.taskId, confirmation: "APPLY" }),
+    "WORKSPACE_PRECONDITION_FAILED"
+  );
 
   for (const output of ["```diff\n" + validPatch + "```", validPatch.replaceAll("note.txt", "new.txt")]) {
     const root = repository();
@@ -3506,14 +3514,10 @@ index 9d1c2f3..3b18e51 100644
 
     const results = await Promise.allSettled([firstApply, secondApply]);
     assert.equal(secondEnteredBeforeRelease, false);
-    assert.equal(results.filter(({ status }) => status === "fulfilled").length, 1);
-    assert.equal(results.filter(({ status }) => status === "rejected").length, 1);
-    assert.equal(
-      (results.find(({ status }) => status === "rejected") as PromiseRejectedResult).reason.code,
-      "WORKSPACE_PRECONDITION_FAILED"
-    );
+    assert.equal(results.filter(({ status }) => status === "fulfilled").length, 2);
+    assert.equal(results.filter(({ status }) => status === "rejected").length, 0);
     assert.equal(readFileSync(join(root, "note.txt"), "utf8"), "after\n");
-    assert.equal(readFileSync(join(root, "second.txt"), "utf8"), "before\n");
+    assert.equal(readFileSync(join(root, "second.txt"), "utf8"), "after\n");
   } finally {
     releaseGate(firstRelease);
     releaseGate(secondRelease);

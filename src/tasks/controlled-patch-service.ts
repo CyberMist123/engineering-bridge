@@ -763,6 +763,14 @@ export class ControlledPatchService {
         const entry = await this.git(workspaceRoot, ["ls-tree", base.head, "--", target.path]);
         if (target.kind === "modified") {
           if (!/^(100644|100755) blob [0-9a-f]+\t[^\n]+\n?$/u.test(entry)) failPatch();
+          const status = await this.git(workspaceRoot, [
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+            "--",
+            target.path
+          ]);
+          if (status.length !== 0) throw new CoreError("WORKSPACE_PRECONDITION_FAILED");
           continue;
         }
         if (entry.length !== 0) failPatch();
@@ -873,8 +881,6 @@ export class ControlledPatchService {
 
   private async verifyWorkspace(workspaceRoot: string): Promise<ProposalBase> {
     await this.verifyWorkspaceRoot(workspaceRoot);
-    const status = await this.git(workspaceRoot, ["status", "--porcelain", "--untracked-files=no"]);
-    if (status.length !== 0) throw new CoreError("WORKSPACE_PRECONDITION_FAILED");
     return this.detectBase(workspaceRoot);
   }
 
