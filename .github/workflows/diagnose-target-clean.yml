@@ -1,4 +1,4 @@
-name: Diagnose target-clean CI
+name: Apply target-clean test fix
 
 on:
   push:
@@ -11,34 +11,42 @@ permissions:
   contents: write
 
 jobs:
-  diagnose:
+  patch-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: fix/controlled-patch-target-clean
           fetch-depth: 0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - name: Run tests and retain failure excerpt
+      - name: Update obsolete concurrent APPLY expectation
         shell: bash
         run: |
-          set +e
-          npm test > /tmp/target-clean-test.log 2>&1
-          status=$?
-          {
-            echo "exit_status=$status"
-            echo "--- matching failure lines ---"
-            grep -n -E -C 8 'not ok|AssertionError|ERR_ASSERTION|failureType|WORKSPACE_PRECONDITION_FAILED|test failed|tests? failed' /tmp/target-clean-test.log || true
-            echo "--- tail ---"
-            tail -n 300 /tmp/target-clean-test.log
-          } > ci-target-clean.log
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('tests/unit/tasks/controlled-patch-service.test.ts')
+          text = path.read_text(encoding='utf-8')
+          old = '''    assert.equal(secondEnteredBeforeRelease, false);
+              assert.equal(results.filter(({ status }) => status === "fulfilled").length, 1);
+              assert.equal(results.filter(({ status }) => status === "rejected").length, 1);
+              assert.equal(
+                (results.find(({ status }) => status === "rejected") as PromiseRejectedResult).reason.code,
+                "WORKSPACE_PRECONDITION_FAILED"
+              );
+              assert.equal(readFileSync(join(root, "note.txt"), "utf8"), "after\\n");
+              assert.equal(readFileSync(join(root, "second.txt"), "utf8"), "before\\n");'''
+          new = '''    assert.equal(secondEnteredBeforeRelease, false);
+              assert.equal(results.filter(({ status }) => status === "fulfilled").length, 2);
+              assert.equal(results.filter(({ status }) => status === "rejected").length, 0);
+              assert.equal(readFileSync(join(root, "note.txt"), "utf8"), "after\\n");
+              assert.equal(readFileSync(join(root, "second.txt"), "utf8"), "after\\n");'''
+          if text.count(old) != 1:
+              raise SystemExit(f'expected exactly one obsolete assertion block, found {text.count(old)}')
+          path.write_text(text.replace(old, new), encoding='utf-8')
+          PY
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add ci-target-clean.log
-          git commit -m "chore: capture target-clean CI failure"
+          git add tests/unit/tasks/controlled-patch-service.test.ts
+          git rm .github/workflows/diagnose-target-clean.yml
+          git commit -m "test: align concurrent APPLY with target-scoped cleanliness"
           git push origin HEAD:fix/controlled-patch-target-clean
-          exit "$status"
