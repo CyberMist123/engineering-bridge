@@ -2002,11 +2002,19 @@ test("removes a proposal when its controlled patch generation task fails", async
   assert.equal(proposals.has(generated.taskId), false);
 });
 
-test("rejects dirty workspaces, changed HEAD, and malformed or out-of-scope patches", async () => {
+test("rejects dirty targets, changed HEAD, and malformed or out-of-scope patches", async () => {
   const dirtyRoot = repository();
   writeFileSync(join(dirtyRoot, "note.txt"), "dirty\n");
-  const dirty = fixture(dirtyRoot, async () => ({ kind: "completed", output: validPatch })).controlled;
-  await expectCode(() => dirty.generate({ workspace_id: "workspace", change_request: "change" }), "WORKSPACE_PRECONDITION_FAILED");
+  const { controlled: dirty, tasks: dirtyTasks } = fixture(
+    dirtyRoot,
+    async () => ({ kind: "completed", output: validPatch })
+  );
+  const dirtyGenerated = await dirty.generate({ workspace_id: "workspace", change_request: "change" });
+  await terminal(dirtyTasks, dirtyGenerated.taskId);
+  await expectCode(
+    () => dirty.apply({ patch_task_id: dirtyGenerated.taskId, confirmation: "APPLY" }),
+    "WORKSPACE_PRECONDITION_FAILED"
+  );
 
   for (const output of ["```diff\n" + validPatch + "```", validPatch.replaceAll("note.txt", "new.txt")]) {
     const root = repository();
